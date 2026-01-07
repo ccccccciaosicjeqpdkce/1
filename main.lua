@@ -1,5 +1,5 @@
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-local f = loadstring(game:HttpGet(""))()
+local f = loadstring(game:HttpGet("https://raw.githubusercontent.com/ccccccciaosicjeqpdkce/1/refs/heads/main/mod.lua"))()
 
 local Window = WindUI:CreateWindow({
     Title = "MVSD PREMIUM (FREE)",
