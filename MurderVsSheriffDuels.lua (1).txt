@@ -1,0 +1,759 @@
+local wind = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local window = wind:CreateWindow({
+    Title = "Murder vs Sheriff Duels",
+    Icon = "star",
+    Author = "by Cypher Scripts",
+    Folder = "KJoiuyFTTyIjKLJioIYttF",
+    Size = UDim2.fromOffset(540, 325),
+    MinSize = Vector2.new(300, 250),
+    MaxSize = Vector2.new(850, 560),
+    Transparent = true,
+    Theme = "Sky",
+    Resizable = true,
+    SideBarWidth = 200,
+    BackgroundImageTransparency = 0.42,
+    HideSearchBar = true,
+    ScrollBarEnabled = false,
+    User = {
+        Enabled = true,
+        Anonymous = false,
+        Callback = function()
+            -- no function
+        end,
+    },
+})
+local Welcome = window:Tab({
+    Title = "Welcome",
+    Icon = "star",
+    Locked = false,
+})
+local Main = window:Tab({
+    Title = "Main",
+    Icon = "house",
+    Locked = false,
+})
+local Killing = window:Tab({
+    Title = "Killing",
+    Icon = "skull",
+    Locked = false,
+})
+local Esp = window:Tab({
+    Title = "Esp and Colors",
+    Icon = "eye-off",
+    Locked = false,
+})
+local Ability = window:Tab({
+    Title = "Ability",
+    Icon = "cloud-lightning",
+    Locked = false,
+})
+window:Tag({
+    Title = "Keyless",
+    Color = Color3.fromHex("#48FF00"),
+    Radius = 5,
+})
+window:Tag({
+    Title = "New",
+    Color = Color3.fromHex("#00B7FF"),
+    Radius = 5,
+})
+wind:Notify({
+    Title = "Welcome to Cypher Scripts!",
+    Content = "We hope you enjoy our script as much as we enjoyed making it!",
+    Duration = 5,
+    Icon = "star",
+})
+Welcome:Paragraph({
+    Title = "Welcome to Cypher Scripts Mvsd!",
+    Desc = "We hope you enjoy this script and please let us know for any bugs you encounter, toggle key is P!",
+    Color = "Blue",
+    Image = "",
+    ImageSize = 0,
+    Thumbnail = "",
+    ThumbnailSize = 0,
+    Locked = false,
+    Buttons = {
+        {
+            Icon = "link",
+            Title = "Copy Discord Link",
+            Callback = function()
+                setclipboard("https://discord.gg/evelynnscripts")
+                wind:Notify({
+                    Title = "Copied Successfully",
+                    Content = "Thank you for joining our discord!",
+                    Duration = 3,
+                    Icon = "check",
+                })
+            end,
+        }
+    }
+})
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local Player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local Collection = game:GetService("CollectionService")
+local Camera = Workspace.CurrentCamera
+
+local autoshoot_enabled = false
+local max_distance = 300
+local autoshoot_thread = nil
+
+local remove_gun_cooldown = false
+
+local hitbox_expander = false
+local hitbox_size = 13
+local hitbox_color = Color3.fromRGB(255, 0, 0)
+
+local esp_highlighter = false
+local esp_team_color = Color3.fromRGB(0, 255, 0)
+local esp_enemy_color = Color3.fromRGB(255, 0, 0)
+local player_esp = CoreGui:FindFirstChild("Highlights") or Instance.new("Folder")
+player_esp.Name = "Highlights"
+player_esp.Parent = CoreGui
+
+local enemyCache = {}
+local killing_connections = {}
+local default_ability_values = {}
+local abilityConfig = {}
+local WEAPON_TYPE = {
+    gun = "Gun_Equip",
+    knife = "Knife_Equip",
+}
+local lock = {
+    gun = false,
+    knife = false
+}
+getgenv().killing_buttons = {
+    gun = false,
+    knife = false
+}
+getgenv().killing_loops = {
+    gun = false,
+    knife = false
+}
+
+local Ability_Modules = ReplicatedStorage:FindFirstChild("Ability") and
+    ReplicatedStorage.Ability:FindFirstChild("AbilityConfig")
+if Ability_Modules then
+    local success, config = pcall(require, Ability_Modules)
+    if success and typeof(config) == "table" then
+        abilityConfig = config
+        for k, configurations in pairs(config) do
+            default_ability_values[k] = configurations
+        end
+    else
+        abilityConfig = {}
+    end
+else
+    abilityConfig = {}
+end
+
+function updateCache()
+    if not Player.Character then return end
+    enemyCache = {}
+    for _, enemy in pairs(Players:GetPlayers()) do
+        task.spawn(function()
+            if enemy and enemy ~= Player and enemy.Team and enemy.Team ~= Player.Team then
+                if enemy.Character and enemy.Character.Parent == Workspace then
+                    local targetPart = enemy.Character:FindFirstChild("HumanoidRootPart")
+                    if targetPart then
+                        enemyCache[enemy] = targetPart
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local function equip_weapon(weapon)
+    local backpack = Player.Backpack
+    local character = Player.Character
+    if not character or not backpack then
+        return false
+    end
+    local attempts = 0
+    local maxAttempts = 10
+    while attempts < maxAttempts do
+        task.wait(0.2)
+        attempts = attempts + 1
+        for _, tool in pairs(backpack:GetChildren()) do
+            if tool:GetAttribute("EquipAnimation") == weapon then
+                character.Humanoid:EquipTool(tool)
+                return true
+            end
+        end
+    end
+    return false
+end
+local function notify_activated()
+    wind:Notify({
+        Title = "Feature Activated",
+        Content = "This feature has been activated!",
+        Duration = 4,
+        Icon = "circle-check",
+    })
+end
+local function killAllKnife()
+    local character = Player.Character
+    if not character then
+        return
+    end
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then
+        return
+    end
+    for _, part in pairs(enemyCache) do
+        task.spawn(function()
+            if part then
+                local origin = humanoidRootPart.Position
+                local direction = (part.Position - origin).Unit
+                ReplicatedStorage.Remotes:WaitForChild("ThrowStart"):FireServer(origin, direction)
+                ReplicatedStorage.Remotes:WaitForChild("ThrowHit"):FireServer(part, part.Position)
+            end
+        end)
+    end
+end
+local function killAllGun()
+    local character = Player.Character
+    if not character then
+        return
+    end
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    for _, part in pairs(enemyCache) do
+        task.spawn(function()
+            if part then
+                ReplicatedStorage.Remotes:WaitForChild("ShootGun"):FireServer(humanoidRootPart.Position, part.Position,
+                    part,
+                    part.Position)
+            end
+        end)
+    end
+end
+local function controller()
+    pcall(function()
+        loadstring(game:HttpGet(
+            "https://raw.githubusercontent.com/evelynnscripts/Scripts/refs/heads/main/New-Mvsd/controllers.lua"
+        ))()
+    end)
+end
+
+local CKilling = {}
+CKilling["cache"] = RunService.Heartbeat:Connect(function()
+    updateCache()
+end)
+CKilling["knife"] = RunService.Heartbeat:Connect(function()
+    if getgenv().killing_buttons.knife then
+        equip_weapon(WEAPON_TYPE.knife)
+        killAllKnife()
+        getgenv().killing_buttons.knife = false
+    end
+    if getgenv().killing_buttons.gun then
+        equip_weapon(WEAPON_TYPE.gun)
+        killAllGun()
+        getgenv().killing_buttons.gun = false
+    end
+    task.wait(0.1)
+end)
+CKilling["gun"] = RunService.Heartbeat:Connect(function()
+    if getgenv().killing_loops.gun and not lock.gun then
+        killAllGun()
+    end
+    if getgenv().killing_loops.knife and not lock.knife then
+        killAllKnife()
+    end
+    task.wait(0.1)
+end)
+CKilling["loops"] = Player.CharacterAdded:Connect(function()
+    local character = Player.Character
+    if not character then
+        return
+    end
+    lock.gun = true
+    lock.knife = true
+    if getgenv().killing_loops.gun then
+        equip_weapon(WEAPON_TYPE.gun)
+    elseif getgenv().killing_loops.knife then
+        equip_weapon(WEAPON_TYPE.knife)
+    end
+    local humanoidRootPart = character:WaitForChild("HumanoidRootPart", 3)
+    if not humanoidRootPart or not Player:GetAttribute("Match") then
+        return
+    end
+    local anchoredConnection = humanoidRootPart:GetPropertyChangedSignal("Anchored"):Connect(function()
+        if not humanoidRootPart.Anchored then
+            if getgenv().killing_loops.gun then
+                lock.gun = false
+            elseif getgenv().killing_loops.knife then
+                lock.knife = false
+            end
+            if anchoredConnection then
+                anchoredConnection:Disconnect()
+            end
+        end
+    end)
+end)
+
+Main:Toggle({ -- autoshoot toggle
+    Title = "Enable Autoshoot",
+    Desc = "This will automatically shoot enemies for you",
+    Icon = "check",
+    Default = false,
+    Callback = function(Value)
+        autoshoot_enabled = Value
+        if autoshoot_thread then
+            task.cancel(autoshoot_thread)
+            autoshoot_thread = nil
+        end
+        if Value then
+            notify_activated()
+            local lastShotTime = 0
+            local shotCooldown = 2
+            local function shoot(target)
+                local myChar = Player.Character
+                local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                local targetHrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+                if myRoot and targetHrp then
+                    local origin = myRoot.Position
+                    local direction = (targetHrp.Position - origin).Unit
+                    local Vector1 = origin
+                    local Vector2 = origin + (direction * 50)
+                    local hitPart = target.Character:FindFirstChild("LowerTorso") or
+                        target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Head")
+                    local Vector3 = Vector3.new(math.random(), math.random(), math.random()) * 0.1
+                    if hitPart then
+                        ReplicatedStorage.Remotes.ShootGun:FireServer(Vector1, Vector2, hitPart, Vector3)
+                        lastShotTime = tick()
+                    end
+                end
+            end
+            local function canShoot()
+                return (tick() - lastShotTime) >= shotCooldown
+            end
+            local function shoot_sound()
+                local char = Player.Character
+                if char then
+                    local tool = char:FindFirstChildOfClass("Tool")
+                    local sound = tool and tool:FindFirstChild("Fire")
+                    if sound and sound:IsA("Sound") then
+                        sound:Play()
+                    end
+                end
+            end
+            local function shoot_tracer(fromPos, toPos)
+                local distance = (toPos - fromPos).Magnitude
+                local midpoint = (fromPos + toPos) / 2
+                local part = Instance.new("Part")
+                part.Anchored = true
+                part.CanCollide = false
+                part.Material = Enum.Material.Neon
+                part.Size = Vector3.new(0.1, 0.1, distance)
+                part.CFrame = CFrame.new(midpoint, toPos)
+                part.Color = Color3.fromRGB(255, 255, 255)
+                part.Parent = Workspace
+                game:GetService("Debris"):AddItem(part, 0.15)
+            end
+            local function has_clear_los(fromPos, toPos, targetCharacter)
+                local params = RaycastParams.new()
+                params.FilterDescendantsInstances = { Player.Character, targetCharacter }
+                params.FilterType = Enum.RaycastFilterType.Exclude
+                local result = Workspace:Raycast(fromPos, (toPos - fromPos), params)
+                if result then
+                    if not result.Instance:IsDescendantOf(targetCharacter) then
+                        return false
+                    end
+                end
+                return true
+            end
+            local function valid_enemy(enemy)
+                local Character = enemy.Character
+                if not Character then return false end
+                local Humanoid = Character:FindFirstChild("Humanoid")
+                local Head = Character:FindFirstChild("Head")
+                local Hrp = Character:FindFirstChild("HumanoidRootPart")
+                local my_Hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+                if not enemy or enemy == Player then
+                    return false
+                end
+                if not Character or Character.Parent ~= Workspace then
+                    return false
+                end
+                if enemy.Team and enemy.Team == Player.Team then
+                    return false
+                end
+                if Collection:HasTag(Character, "Invulnerable") or Collection:HasTag(Character, "SpeedTrail") then
+                    return false
+                end
+                if not (Humanoid and Head and Hrp and my_Hrp) then
+                    return false
+                end
+                if Humanoid.Health <= 0 then
+                    return false
+                end
+                local distance = (Hrp.Position - my_Hrp.Position).Magnitude
+                if distance > max_distance then
+                    return false
+                end
+                if not has_clear_los(my_Hrp.Position, Hrp.Position, Character) then
+                    return false
+                end
+                local toTarget = (Hrp.Position - Camera.CFrame.Position).Unit
+                local isInFov = Camera.CFrame.LookVector:Dot(toTarget) >= 0.9
+                return isInFov
+            end
+            autoshoot_thread = task.spawn(function()
+                while autoshoot_enabled do
+                    local myChar = Player.Character
+                    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                    if myChar and myRoot then
+                        local closestTarget = nil
+                        local closestDistance = math.huge
+                        for _, enemy in pairs(Players:GetPlayers()) do
+                            if valid_enemy(enemy) then
+                                local hrp = enemy.Character and enemy.Character:FindFirstChild("HumanoidRootPart")
+                                if hrp then
+                                    local dist = (hrp.Position - myRoot.Position).Magnitude
+                                    if dist < closestDistance then
+                                        closestDistance = dist
+                                        closestTarget = enemy
+                                    end
+                                end
+                            end
+                        end
+                        if closestTarget and canShoot() then
+                            local from = myRoot.Position
+                            local to = closestTarget.Character.HumanoidRootPart.Position
+                            if has_clear_los(from, to, closestTarget.Character) then
+                                shoot(closestTarget)
+                                shoot_sound()
+                                shoot_tracer(from, to)
+                            end
+                        end
+                    end
+                    task.wait(0.09)
+                end
+            end)
+        end
+    end
+})
+Main:Toggle({ -- remove gun cooldown
+    Title = "Remove Gun Cooldown",
+    Desc = "Changes may apply when you respawn",
+    Icon = "check",
+    Default = false,
+    Callback = function(Value)
+        remove_gun_cooldown = Value
+        if Value then
+            notify_activated()
+            while remove_gun_cooldown do
+                task.wait()
+                local tools = {}
+                for _, container in ipairs({ Player:FindFirstChild("Backpack"), Player.Character }) do
+                    if container then
+                        for _, tool in ipairs(container:GetChildren()) do
+                            if tool:IsA("Tool") and tool:FindFirstChild("Fire") then
+                                table.insert(tools, tool)
+                            end
+                        end
+                    end
+                end
+                for _, tool in ipairs(tools) do
+                    if tool:GetAttribute("Cooldown") ~= 0 then
+                        tool:SetAttribute("Cooldown", 0)
+                    end
+                end
+            end
+        end
+    end,
+})
+Main:Toggle({ -- auto spin
+    Title = "Auto Spin",
+    Desc = "Auto spins for you when not in match",
+    Default = false,
+    Callback = function(state)
+        getgenv().autoSpin = state
+        task.spawn(function()
+            while getgenv().autoSpin do
+                if not Player:GetAttribute("Match") then
+                    ReplicatedStorage.Dailies.Spin:InvokeServer()
+                end
+                task.wait(0.1)
+            end
+        end)
+    end,
+})
+Main:Toggle({ -- hitbox toggle
+    Title = "Enable Hitbox Expander",
+    Desc = "Adds hitbox to all enemies",
+    Icon = "check",
+    Default = false,
+    Callback = function(Value)
+        hitbox_expander = Value
+        if not hitbox_expander then
+            for _, player in pairs(Players:GetPlayers()) do
+                if player ~= Player then
+                    local character = player.Character
+                    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.Size = Vector3.new(2, 2, 1)
+                        hrp.CanCollide = false
+                        local hit_box = hrp:FindFirstChild("hit_box")
+                        if hit_box then
+                            hit_box:Destroy()
+                        end
+                    end
+                end
+            end
+            return
+        end
+        task.spawn(function()
+            if hitbox_expander then
+                notify_activated()
+            end
+            while hitbox_expander do
+                for _, player in pairs(Players:GetPlayers()) do
+                    if player ~= Player and player.Character then
+                        local character = player.Character
+                        local hrp = character:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local enemy = player.Team ~= Player.Team
+                            if enemy then
+                                hrp.Size = Vector3.new(hitbox_size, hitbox_size, hitbox_size)
+                                hrp.CanCollide = true
+                                local hit_box = hrp:FindFirstChild("hit_box")
+                                if not hit_box then
+                                    local box_handle = Instance.new("BoxHandleAdornment")
+                                    box_handle.Name = "hit_box"
+                                    box_handle.Adornee = hrp
+                                    box_handle.AlwaysOnTop = true
+                                    box_handle.ZIndex = 10
+                                    box_handle.Size = hrp.Size
+                                    box_handle.Color3 = hitbox_color
+                                    box_handle.Transparency = 0.8
+                                    box_handle.Parent = hrp
+                                else
+                                    hit_box.Size = hrp.Size
+                                end
+                            else
+                                -- Reset teammates
+                                hrp.Size = Vector3.new(2, 2, 1)
+                                hrp.CanCollide = false
+                                local hit_box = hrp:FindFirstChild("hit_box")
+                                if hit_box then
+                                    hit_box:Destroy()
+                                end
+                            end
+                        end
+                    end
+                end
+                task.wait(0.1)
+            end
+        end)
+    end
+})
+Main:Slider({ -- hitbox size
+    Title = "Hitbox Size",
+    Step = 1,
+    Value = {
+        Min = 5,
+        Max = 100,
+        Default = 13,
+    },
+    Callback = function(size)
+        hitbox_size = size
+    end
+})
+
+Killing:Button({
+    Title = "Kill All | Knife",
+    Desc = "",
+    Locked = false,
+    Callback = function()
+        getgenv().killing_buttons.knife = true
+    end
+})
+Killing:Button({
+    Title = "Kill All | Gun",
+    Desc = "",
+    Locked = false,
+    Callback = function()
+        getgenv().killing_buttons.gun = true
+    end
+})
+Killing:Toggle({
+    Title = "Loop Kill All | Knife",
+    Desc = "",
+    Icon = "check",
+    Default = false,
+    Callback = function(state)
+        if state then
+            getgenv().killing_loops.knife = true
+        else
+            getgenv().killing_loops.knife = false
+        end
+    end
+})
+Killing:Toggle({
+    Title = "Loop Kill All | Gun",
+    Desc = "",
+    Icon = "check",
+    Default = false,
+    Callback = function(state)
+        if state then
+            getgenv().killing_loops.gun = true
+        else
+            getgenv().killing_loops.gun = false
+        end
+    end
+})
+
+Esp:Toggle({ -- esp toggle
+    Title = "Character Highlighter",
+    Desc = "Red = Enemies | Green = Teammates",
+    Icon = "check",
+    Default = false,
+    Callback = function(Value)
+        esp_highlighter = Value
+        if not Value then
+            esp_highlighter = false
+            for _, esp_players in ipairs(player_esp:GetChildren()) do
+                esp_players:Destroy()
+            end
+            return
+        end
+        task.spawn(function()
+            if esp_highlighter then
+                notify_activated()
+            end
+            while esp_highlighter do
+                task.wait(0.1)
+                for _, v in ipairs(Players:GetPlayers()) do
+                    if not esp_highlighter then break end
+                    if v ~= Player then
+                        local character = v.Character
+                        if character then
+                            local highlight = player_esp:FindFirstChild(v.Name)
+                            if not highlight then
+                                highlight = Instance.new("Highlight")
+                                highlight.Name = v.Name
+                                highlight.FillTransparency = 0.6
+                                highlight.OutlineTransparency = 0.4
+                                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                highlight.Parent = player_esp
+                            end
+                            local teamColor = (v.Team == Player.Team)
+                                and esp_team_color
+                                or esp_enemy_color
+                            highlight.FillColor = teamColor
+                            highlight.OutlineColor = teamColor
+                            highlight.Adornee = character
+                        end
+                    end
+                end
+            end
+        end)
+    end
+})
+Esp:Colorpicker({ -- team color
+    Title = "Esp Team Color",
+    Desc = "Esp color for teammates",
+    Default = Color3.fromRGB(0, 255, 0),
+    Transparency = 0,
+    Locked = false,
+    Callback = function(color)
+        esp_team_color = color
+    end
+})
+Esp:Colorpicker({ -- enemy color
+    Title = "Esp Enemy Color",
+    Desc = "Esp color for enemies",
+    Default = Color3.fromRGB(255, 0, 0),
+    Transparency = 0,
+    Locked = false,
+    Callback = function(color)
+        esp_enemy_color = color
+    end
+})
+Esp:Colorpicker({ -- hitbox color
+    Title = "Hitbox Colorpicker",
+    Desc = "Changes the color of your hitbox",
+    Default = Color3.fromRGB(255, 0, 0),
+    Transparency = 0,
+    Locked = false,
+    Callback = function(color)
+        hitbox_color = color
+    end
+})
+
+Ability:Toggle({ -- sprint
+    Title = "Remove Sprint Cooldown",
+    Desc = "Sets cooldown to 0",
+    Icon = "check",
+    Default = false,
+    Callback = function(value)
+        abilityConfig.SprintCooldown = value and 0 or default_ability_values.SprintCooldown
+    end
+})
+Ability:Toggle({ -- dash
+    Title = "Remove Dash Cooldown",
+    Desc = "Sets cooldown to 0",
+    Icon = "check",
+    Default = false,
+    Callback = function(value)
+        abilityConfig.DashCooldown = value and 0 or default_ability_values.DashCooldown
+    end
+})
+Ability:Toggle({ -- shroud
+    Title = "Remove Shroud Cooldown",
+    Desc = "Sets cooldown to 0",
+    Icon = "check",
+    Default = false,
+    Callback = function(value)
+        abilityConfig.ShroudCooldown = value and 0 or default_ability_values.ShroudCooldown
+    end
+})
+Ability:Slider({ -- sprint time
+    Title = "Sprint Time",
+    Step = 0.5,
+    Value = {
+        Min = 0,
+        Max = 10,
+        Default = default_ability_values.SprintTime
+    },
+    Callback = function(value)
+        abilityConfig.SprintTime = value
+    end
+})
+Ability:Slider({ -- sprint boost
+    Title = "Sprint Boost",
+    Step = 0.1,
+    Value = {
+        Min = 0,
+        Max = 5,
+        Default = default_ability_values.SprintBoost
+    },
+    Callback = function(value)
+        abilityConfig.SprintBoost = value
+    end
+})
+
+-- init
+window:SetToggleKey(Enum.KeyCode.P)
+Welcome:Select()
+task.spawn(function()
+    repeat task.wait(1) until Player.Character
+    controller()
+end)
+task.spawn(function()
+    while true do
+        controller()
+        task.wait(1)
+    end
+end)
+if Player.Character then
+    updateCache()
+end
+return CKilling
