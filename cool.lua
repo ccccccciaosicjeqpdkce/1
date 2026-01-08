@@ -757,3 +757,4 @@ if Player.Character then
     updateCache()
 end
 return CKilling
+
